@@ -92,3 +92,13 @@ website/.next
 website/.vercel
 website/.data
 website/out
+
+# Demo video — keep repo lean: ignore heavy source footage & raw/oversized exports.
+# Tracked on purpose: demo-video/index.html, sketch.js, *.md,
+# demo-video/buildify-brief.mp4, demo-video/buildify-brief-small.gif
+# (NOTE: .gitignore has no inline comments — keep patterns on their own lines)
+clip*.mp4
+demo-video/clips/
+demo-video/*.webm
+demo-video/buildify-brief.gif
+demo-video/_sheets/
