@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../services/database_helper.dart';
 import '../services/static_site_server.dart';
+import '../services/process_server.dart';
 import '../services/native_server_bridge.dart';
 
 enum BackendLogType { request, error, system }
@@ -214,6 +215,7 @@ class EmbeddedBackendService {
   final _projectLogControllers = <String, StreamController<BackendLogEvent>>{};
   final _sessionControllers = <String, StreamController<BackendSession>>{};
   final _staticServers = <String, StaticSiteServer>{};
+  final _processServers = <String, ProcessServer>{};
   final _nativeBridge = const NativeServerBridge();
   Timer? _ticker;
   BackendState _state;
@@ -421,51 +423,101 @@ class EmbeddedBackendService {
     String tunnelProvider = 'cloudflare',
   }) async {
     _ticker?.cancel();
-    
-    final project = _state.projects.firstWhere((p) => p.id == projectId);
-    
-    _log(
-      projectId,
-      'system',
-      '-- starting static site server on port ${project.port} --',
-      BackendLogType.system,
-    );
 
-    // Start static site server
-    final server = StaticSiteServer(
-      localPath: project.localPath,
-      port: project.port,
-      publishDir: project.publishDir,
-      onLog: (msg, {isError = false}) {
-        _log(
-          projectId,
-          'server',
-          msg,
-          isError ? BackendLogType.error : BackendLogType.request,
-        );
-      },
-    );
-    try {
-      await server.start();
-      _staticServers[projectId] = server;
-    } catch (e) {
-      _log(
-        projectId,
-        'system',
-        '[ERR] Failed to bind server port ${project.port}: $e',
-        BackendLogType.error,
+    final project = _state.projects.firstWhere((p) => p.id == projectId);
+
+    // Resolve working directory (base_dir is relative to localPath)
+    final workDir = project.baseDir.isNotEmpty
+        ? join(project.localPath, project.baseDir)
+        : project.localPath;
+
+    // --- Build step (static sites only) ---
+    // For process-type projects, buildCommand is the server start command,
+    // not a build step — skip the blocking build phase for them.
+    final isProcessServer = _needsProcessServer(project.repoProvider);
+
+    if (!isProcessServer && project.buildCommand.isNotEmpty) {
+      _log(projectId, 'system', '-- running build: ${project.buildCommand} --',
+          BackendLogType.system);
+
+      final buildOk = await ProcessServer.runBuild(
+        command: project.buildCommand,
+        workingDirectory: workDir,
+        environment: project.envVars,
+        onLog: (msg, {bool isError = false}) {
+          _log(projectId, 'build', msg,
+              isError ? BackendLogType.error : BackendLogType.system);
+        },
       );
-      rethrow;
+
+      if (!buildOk) {
+        _log(projectId, 'system', '-- build failed; aborting start --',
+            BackendLogType.error);
+        throw Exception('Build command failed. Check logs for details.');
+      }
     }
 
-    _log(
-      projectId,
-      'system',
-      '-- starting cloudflare tunnel --',
-      BackendLogType.system,
-    );
+    // --- Server start ---
+    if (isProcessServer) {
+      if (project.buildCommand.isEmpty) {
+        _log(projectId, 'system',
+            '[ERR] No start command configured for process server',
+            BackendLogType.error);
+        throw Exception(
+            'No start command configured. Set a start command in project settings.');
+      }
 
-    // Start Cloudflare tunnel
+      _log(projectId, 'system',
+          '-- starting process server on port ${project.port} --',
+          BackendLogType.system);
+
+      final srv = ProcessServer(
+        command: project.buildCommand,
+        workingDirectory: workDir,
+        port: project.port,
+        environment: project.envVars,
+        onLog: (msg, {bool isError = false}) {
+          _log(projectId, 'server', msg,
+              isError ? BackendLogType.error : BackendLogType.request);
+        },
+      );
+      try {
+        await srv.start();
+        _processServers[projectId] = srv;
+      } catch (e) {
+        _log(projectId, 'system', '[ERR] Failed to start process: $e',
+            BackendLogType.error);
+        rethrow;
+      }
+    } else {
+      // Static file server
+      _log(projectId, 'system',
+          '-- starting static site server on port ${project.port} --',
+          BackendLogType.system);
+
+      final server = StaticSiteServer(
+        localPath: project.localPath,
+        port: project.port,
+        publishDir: project.publishDir,
+        onLog: (msg, {bool isError = false}) {
+          _log(projectId, 'server', msg,
+              isError ? BackendLogType.error : BackendLogType.request);
+        },
+      );
+      try {
+        await server.start();
+        _staticServers[projectId] = server;
+      } catch (e) {
+        _log(projectId, 'system',
+            '[ERR] Failed to bind server port ${project.port}: $e',
+            BackendLogType.error);
+        rethrow;
+      }
+    }
+
+    _log(projectId, 'system', '-- starting cloudflare tunnel --',
+        BackendLogType.system);
+
     await _nativeBridge.startTunnel(port: project.port);
 
     final session = BackendSession(
@@ -488,22 +540,31 @@ class EmbeddedBackendService {
       if (current == null || !current.isRunning) return;
 
       final status = await _nativeBridge.getTunnelStatus();
-      if (status != null && status.publicUrl != null && status.publicUrl!.isNotEmpty) {
-         if (current.publicUrl != status.publicUrl) {
-           final next = current.copyWith(publicUrl: status.publicUrl);
-           _emit(_state.copyWith(activeSession: next));
-           
-           _log(
-              projectId,
-              current.id,
+      if (status != null &&
+          status.publicUrl != null &&
+          status.publicUrl!.isNotEmpty) {
+        if (current.publicUrl != status.publicUrl) {
+          final next = current.copyWith(publicUrl: status.publicUrl);
+          _emit(_state.copyWith(activeSession: next));
+          _log(projectId, current.id,
               '-- tunnel active at ${status.publicUrl} --',
-              BackendLogType.system,
-           );
-         }
+              BackendLogType.system);
+        }
       }
     });
 
     return session;
+  }
+
+  bool _needsProcessServer(String repoProvider) {
+    final t = repoProvider.toLowerCase();
+    return t == 'nodejs' ||
+        t == 'node.js' ||
+        t == 'node' ||
+        t == 'python' ||
+        t == 'python fastapi' ||
+        t == 'flask' ||
+        t == 'fastapi';
   }
 
   Future<void> stopSession({required String sessionId}) async {
@@ -518,9 +579,11 @@ class EmbeddedBackendService {
       BackendLogType.system,
     );
     
-    // Stop static server
+    // Stop static server or process server
     await _staticServers[current.projectId]?.stop();
     _staticServers.remove(current.projectId);
+    await _processServers[current.projectId]?.stop();
+    _processServers.remove(current.projectId);
     
     // Stop tunnel
     await _nativeBridge.stopTunnel();
