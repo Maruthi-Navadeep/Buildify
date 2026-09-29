@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
 import '../models/ai_server_models.dart';
 import '../services/native_server_bridge.dart';
@@ -117,6 +118,7 @@ class AiServerController extends StateNotifier<AiServerState> {
       downloads: downloads,
     );
     _appendLog('loaded ${catalog.length} model(s) from catalog', LogType.system);
+    unawaited(_loadCustomModels());
     unawaited(_hydrateNativeState());
     unawaited(_loadSecuritySettings());
   }
@@ -410,11 +412,10 @@ class AiServerController extends StateNotifier<AiServerState> {
       return;
     }
     final part = File('${target.path}.part');
-    if (await part.exists()) {
-      try {
-        await part.delete();
-      } catch (_) {}
-    }
+    // Keep existing .part for resume; only delete if the final file already exists
+    // but wasn't detected as downloaded (size check failed).
+    final existingBytes =
+        await part.exists() ? await part.length() : 0;
 
     _setDownload(
       modelId,
@@ -423,7 +424,12 @@ class AiServerController extends StateNotifier<AiServerState> {
         progress: 0.0,
       ),
     );
-    _appendLog('download started: ${model.name}', LogType.system);
+    _appendLog(
+      existingBytes > 0
+          ? 'resuming download: ${model.name} (${_fmtBytes(existingBytes)} already fetched)'
+          : 'download started: ${model.name}',
+      LogType.system,
+    );
 
     final client = http.Client();
     _downloadClients[modelId] = client;
@@ -432,6 +438,9 @@ class AiServerController extends StateNotifier<AiServerState> {
     try {
       final req = http.Request('GET', Uri.parse(model.downloadUrl));
       req.followRedirects = true;
+      if (existingBytes > 0) {
+        req.headers['Range'] = 'bytes=$existingBytes-';
+      }
       resp = await client.send(req);
     } catch (e) {
       _downloadClients.remove(modelId)?.close();
@@ -446,7 +455,9 @@ class AiServerController extends StateNotifier<AiServerState> {
       return;
     }
 
-    if (resp.statusCode != 200) {
+    // 206 = resume accepted, 200 = server sent full file (no range support)
+    final isResume = resp.statusCode == 206;
+    if (resp.statusCode != 200 && resp.statusCode != 206) {
       _downloadClients.remove(modelId)?.close();
       _setDownload(
         modelId,
@@ -462,10 +473,20 @@ class AiServerController extends StateNotifier<AiServerState> {
       return;
     }
 
-    final total = resp.contentLength ?? 0;
-    final sink = part.openWrite();
-    var received = 0;
-    var lastReportedProgress = -1.0;
+    // If server ignored Range and sent 200, discard any partial data
+    if (!isResume && existingBytes > 0) {
+      try {
+        await part.delete();
+      } catch (_) {}
+    }
+
+    final contentLength = resp.contentLength ?? 0;
+    final total = isResume ? existingBytes + contentLength : contentLength;
+    final sink = isResume
+        ? part.openWrite(mode: FileMode.append)
+        : part.openWrite();
+    var received = isResume ? existingBytes : 0;
+    var lastReportedProgress = total > 0 ? received / total : -1.0;
 
     final completer = Completer<void>();
     final sub = resp.stream.listen(
@@ -906,9 +927,232 @@ class AiServerController extends StateNotifier<AiServerState> {
     return fallback;
   }
 
+  // ─── Custom model persistence ──────────────────────────────────────────────
+
+  Future<File> get _customModelsFile async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File('${dir.path}/custom_models.json');
+  }
+
+  Future<void> _loadCustomModels() async {
+    try {
+      final file = await _customModelsFile;
+      if (!await file.exists()) return;
+      final list = jsonDecode(await file.readAsString()) as List<dynamic>;
+      final custom = list
+          .whereType<Map<String, dynamic>>()
+          .map(ModelProfile.fromJson)
+          .toList();
+      if (custom.isEmpty) return;
+      final merged = [...state.models];
+      final existingIds = merged.map((m) => m.id).toSet();
+      final downloads = {...state.downloads};
+      for (final m in custom) {
+        if (!existingIds.contains(m.id)) {
+          merged.add(m);
+          downloads[m.id] = const ModelDownload(
+            status: ModelDownloadStatus.notDownloaded,
+            progress: 0,
+          );
+        }
+      }
+      state = state.copyWith(models: merged, downloads: downloads);
+    } catch (_) {}
+  }
+
+  Future<void> _saveCustomModels() async {
+    try {
+      final custom = state.models
+          .where((m) => m.id.startsWith('custom_'))
+          .map((m) => {
+                'id': m.id,
+                'name': m.name,
+                'fileName': m.fileName,
+                'downloadUrl': m.downloadUrl,
+                'sizeLabel': m.sizeLabel,
+                'speed': m.speed,
+                'quality': m.quality,
+                'requiredRamGb': m.requiredRamGb,
+                'description': m.description,
+              })
+          .toList();
+      final file = await _customModelsFile;
+      await file.writeAsString(jsonEncode(custom));
+    } catch (_) {}
+  }
+
+  // ─── Download from arbitrary URL ───────────────────────────────────────────
+
+  /// Creates a custom [ModelProfile] and starts downloading it.
+  Future<void> downloadFromUrl({
+    required String downloadUrl,
+    required String displayName,
+    required String fileName,
+    String sizeLabel = '',
+    String description = '',
+  }) async {
+    final id =
+        'custom_${fileName.replaceAll('.gguf', '').replaceAll(RegExp(r'[^a-z0-9]'), '_').toLowerCase()}';
+
+    if (!state.models.any((m) => m.id == id)) {
+      final profile = ModelProfile(
+        id: id,
+        name: displayName,
+        fileName: fileName,
+        downloadUrl: downloadUrl,
+        sizeLabel: sizeLabel,
+        speed: 'varies',
+        quality: 'custom',
+        requiredRamGb: 4,
+        description: description.isNotEmpty
+            ? description
+            : 'Custom model: $displayName',
+      );
+      state = state.copyWith(
+        models: [...state.models, profile],
+        downloads: {
+          ...state.downloads,
+          id: const ModelDownload(
+            status: ModelDownloadStatus.notDownloaded,
+            progress: 0,
+          ),
+        },
+      );
+      await _saveCustomModels();
+    }
+    await downloadModel(id);
+  }
+
+  // ─── Local file import ──────────────────────────────────────────────────────
+
+  /// Copies a local .gguf file into the models directory and registers it.
+  Future<void> importLocalFile(String filePath) async {
+    final source = File(filePath);
+    if (!await source.exists()) {
+      _appendLog('import failed: file not found', LogType.warning);
+      return;
+    }
+
+    _modelBasePath ??= await _native.getModelBasePath();
+    final base = _modelBasePath;
+    if (base == null || base.isEmpty) {
+      _appendLog('import failed: cannot resolve models directory',
+          LogType.warning);
+      return;
+    }
+    await Directory(base).create(recursive: true);
+
+    final rawName = filePath.split('/').last.split('\\').last;
+    final fileName = rawName.endsWith('.gguf') ? rawName : '$rawName.gguf';
+    final id =
+        'custom_${fileName.replaceAll('.gguf', '').replaceAll(RegExp(r'[^a-z0-9]'), '_').toLowerCase()}';
+    final displayName = fileName
+        .replaceAll('.gguf', '')
+        .replaceAll('_', ' ')
+        .replaceAll('-', ' ');
+
+    final target = File('$base/$fileName');
+    if (!await target.exists()) {
+      _appendLog('copying model file…', LogType.system);
+      await source.copy(target.path);
+    }
+
+    if (!state.models.any((m) => m.id == id)) {
+      final fileSize = await target.length();
+      final sizeLabel = fileSize >= 1024 * 1024 * 1024
+          ? '${(fileSize / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB'
+          : '${(fileSize / (1024 * 1024)).round()} MB';
+      final profile = ModelProfile(
+        id: id,
+        name: displayName,
+        fileName: fileName,
+        downloadUrl: '',
+        sizeLabel: sizeLabel,
+        speed: 'varies',
+        quality: 'custom',
+        requiredRamGb: 4,
+        description: 'Locally imported model',
+      );
+      state = state.copyWith(
+        models: [...state.models, profile],
+        downloads: {
+          ...state.downloads,
+          id: const ModelDownload(
+            status: ModelDownloadStatus.downloaded,
+            progress: 1,
+          ),
+        },
+      );
+      await _saveCustomModels();
+    } else {
+      // Already registered — mark as downloaded
+      final downloads = {...state.downloads};
+      downloads[id] = const ModelDownload(
+        status: ModelDownloadStatus.downloaded,
+        progress: 1,
+      );
+      state = state.copyWith(downloads: downloads);
+    }
+    _appendLog('model imported: $displayName', LogType.system);
+  }
+
+  // ─── Delete model ───────────────────────────────────────────────────────────
+
+  Future<void> deleteModel(String modelId) async {
+    if (modelId == state.selectedModelId &&
+        state.status == ServerStatus.running) {
+      _appendLog('stop the server before deleting the active model',
+          LogType.warning);
+      return;
+    }
+    final model =
+        state.models.firstWhere((m) => m.id == modelId, orElse: () => state.models.first);
+
+    final base = _modelBasePath;
+    if (base != null && base.isNotEmpty) {
+      final file = File('$base/${model.fileName}');
+      final part = File('${file.path}.part');
+      try {
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+      try {
+        if (await part.exists()) await part.delete();
+      } catch (_) {}
+    }
+
+    final isCustom = modelId.startsWith('custom_');
+    final downloads = {...state.downloads}..remove(modelId);
+    if (isCustom) {
+      state = state.copyWith(
+        models: state.models.where((m) => m.id != modelId).toList(),
+        downloads: downloads,
+      );
+      await _saveCustomModels();
+    } else {
+      state = state.copyWith(
+        downloads: {
+          ...downloads,
+          modelId: const ModelDownload(
+            status: ModelDownloadStatus.notDownloaded,
+            progress: 0,
+          ),
+        },
+      );
+    }
+    _appendLog('model deleted: ${model.name}', LogType.system);
+  }
+
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  static String _fmtBytes(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    }
+    return '${(bytes / (1024 * 1024)).round()} MB';
+  }
+
   @override
   void dispose() {
-    for (final sub in _downloadSubs.values) {
       try {
         sub.cancel();
       } catch (_) {}
