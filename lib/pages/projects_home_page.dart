@@ -787,13 +787,16 @@ class _ServiceCardState extends State<_ServiceCard> {
                                     children: [
                                       Icon(data.statusIcon, color: data.statusIconColor, size: 24),
                                       const SizedBox(width: 12),
-                                      Text(
-                                        data.name,
-                                        style: GoogleFonts.spaceMono(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: -0.36,
-                                          color: _ProjectsPalette.onSurface,
+                                      Expanded(
+                                        child: Text(
+                                          data.name,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: GoogleFonts.spaceMono(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: -0.36,
+                                            color: _ProjectsPalette.onSurface,
+                                          ),
                                         ),
                                       ),
                                     ],

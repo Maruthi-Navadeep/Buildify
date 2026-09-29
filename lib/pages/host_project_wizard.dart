@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -9,6 +10,10 @@ import '../providers/ai_server_provider.dart';
 import '../services/guided_tour_service.dart';
 import '../widgets/guided_tour_overlay.dart';
 import '../services/git_service.dart';
+import 'package:archive/archive_io.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
+import 'package:uuid/uuid.dart';
 
 class _WizardPalette {
   static const surfaceBody = Color(0xFF131312); // Matches dashboard
@@ -32,6 +37,7 @@ class HostProjectSourcePage extends ConsumerStatefulWidget {
 class _HostProjectSourcePageState
     extends ConsumerState<HostProjectSourcePage> {
   bool _isHoveringGit = false;
+  bool _extracting = false;
   final _gitRepoKey = GlobalKey();
   final _localUploadKey = GlobalKey();
   final _urlController = TextEditingController();
@@ -256,17 +262,7 @@ class _HostProjectSourcePageState
                                 ),
                               ),
                               InkWell(
-                                onTap: () async {
-                                  final result = await FilePicker.platform.pickFiles(
-                                    type: FileType.custom,
-                                    allowedExtensions: ['zip'],
-                                  );
-                                  if (result != null && context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text('Selected: ${result.files.single.name}')),
-                                    );
-                                  }
-                                },
+                                onTap: _extracting ? null : _handleZipUpload,
                                 child: Text(
                                   'upload a .zip file',
                                   style: GoogleFonts.spaceMono(
@@ -285,14 +281,7 @@ class _HostProjectSourcePageState
                                 ),
                               ),
                               InkWell(
-                                onTap: () async {
-                                  final result = await FilePicker.platform.getDirectoryPath();
-                                  if (result != null && context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text('Selected folder: $result')),
-                                    );
-                                  }
-                                },
+                                onTap: _extracting ? null : _handleFolderPick,
                                 child: Text(
                                   'choose a folder.',
                                   style: GoogleFonts.spaceMono(
@@ -316,6 +305,93 @@ class _HostProjectSourcePageState
         ),
       ),
     );
+  }
+
+  Future<void> _handleFolderPick() async {
+    final result = await FilePicker.platform.getDirectoryPath();
+    if (result == null || !mounted) return;
+    final folderName = p.basename(result);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => HostProjectSettingsPage(
+          repoName: folderName.isNotEmpty ? folderName : 'local-project',
+          existingLocalPath: result,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleZipUpload() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['zip'],
+    );
+    if (result == null || result.files.isEmpty || !mounted) return;
+    final zipPath = result.files.single.path;
+    if (zipPath == null) return;
+
+    setState(() => _extracting = true);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: AlertDialog(
+          backgroundColor: Color(0xFF20201F),
+          content: Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: Colors.white),
+                SizedBox(width: 20),
+                Text('Extracting zip…', style: TextStyle(color: Colors.white)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final destPath = p.join(docsDir.path, 'projects', const Uuid().v4());
+      await Directory(destPath).create(recursive: true);
+
+      final inputStream = InputFileStream(zipPath);
+      final archive = ZipDecoder().decodeStream(inputStream);
+      extractArchiveToDisk(archive, destPath);
+      await inputStream.close();
+
+      // If zip had a single top-level directory, use that as the project root
+      final entries = Directory(destPath).listSync();
+      final localPath =
+          entries.length == 1 && entries.first is Directory
+              ? entries.first.path
+              : destPath;
+
+      final zipName = result.files.single.name.replaceAll('.zip', '');
+      if (!mounted) return;
+      Navigator.pop(context); // dismiss loading dialog
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => HostProjectSettingsPage(
+            repoName: zipName.isEmpty ? 'local-project' : zipName,
+            existingLocalPath: localPath,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // dismiss loading dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to extract zip: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _extracting = false);
+    }
   }
 
   void _handleUrlSubmit(String url, BuildContext context) {
@@ -1025,12 +1101,14 @@ class _HostProjectSelectPageState extends State<HostProjectSelectPage> {
 // ==========================================
 class HostProjectSettingsPage extends ConsumerStatefulWidget {
   const HostProjectSettingsPage({
-    super.key, 
+    super.key,
     required this.repoName,
     this.repoUrl,
+    this.existingLocalPath,
   });
   final String repoName;
   final String? repoUrl;
+  final String? existingLocalPath;
 
   @override
   ConsumerState<HostProjectSettingsPage> createState() =>
@@ -1053,6 +1131,7 @@ class _HostProjectSettingsPageState
 
   bool _isDeploying = false;
   String _deployProgress = '';
+  String _selectedFramework = 'Static HTML';
 
   @override
   void initState() {
@@ -1152,6 +1231,39 @@ class _HostProjectSettingsPageState
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
               children: [
+                // Source info card for local deployments
+                if (widget.existingLocalPath != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 24),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF10B981).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF10B981).withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.folder_open,
+                            color: Color(0xFF10B981), size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            widget.existingLocalPath!,
+                            style: GoogleFonts.spaceMono(
+                              fontSize: 11,
+                              color: const Color(0xFF10B981),
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 2,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
                 // Project Name Input
                 Text(
                   'Project name',
@@ -1197,6 +1309,38 @@ class _HostProjectSettingsPageState
                     fontWeight: FontWeight.w700,
                     color: _WizardPalette.primary,
                   ),
+                ),
+                const SizedBox(height: 16),
+
+                // Framework / runtime selector
+                Text(
+                  'Framework',
+                  style: GoogleFonts.spaceMono(
+                    fontSize: 12,
+                    color: _WizardPalette.textDim,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                DropdownButtonFormField<String>(
+                  value: _selectedFramework,
+                  dropdownColor: _WizardPalette.surfaceBody,
+                  style: GoogleFonts.spaceMono(color: _WizardPalette.primary),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.white.withValues(alpha: 0.05),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: _WizardPalette.outline),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: _WizardPalette.primary),
+                    ),
+                  ),
+                  items: ['Static HTML', 'Node.js', 'Python FastAPI', 'Flask']
+                      .map((r) => DropdownMenuItem(value: r, child: Text(r)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _selectedFramework = val!),
                 ),
                 const SizedBox(height: 16),
 
@@ -1456,8 +1600,9 @@ class _HostProjectSettingsPageState
                       // Create the project in the backend (this allocates port and path)
                       final project = await ref.read(embeddedBackendProvider).createProject(
                             name: name,
-                            sourceType: 'GitHub',
+                            sourceType: _selectedFramework,
                             customUrl: previewUrl,
+                            customLocalPath: widget.existingLocalPath,
                             hostingMode: HostingMode.persistent,
                             branch: _branchController.text.trim().isNotEmpty ? _branchController.text.trim() : 'main',
                             buildCommand: _buildCommandController.text.trim(),
@@ -1466,8 +1611,8 @@ class _HostProjectSettingsPageState
                             envVars: envMap,
                           );
 
-                      // Now clone the repo into the project's localPath if we have a URL
-                      if (widget.repoUrl != null && widget.repoUrl!.isNotEmpty) {
+                      // Clone the repo if we have a URL and no local path already provided
+                      if (widget.repoUrl != null && widget.repoUrl!.isNotEmpty && widget.existingLocalPath == null) {
                         await GitService.cloneRepository(
                           repoUrl: widget.repoUrl!,
                           localPath: project.localPath,
