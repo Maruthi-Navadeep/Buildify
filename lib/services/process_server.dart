@@ -19,12 +19,45 @@ class ProcessServer {
 
   bool get isRunning => _process != null;
 
+  /// Host environment variables that are safe/necessary to forward to a child
+  /// build process. Everything else in [Platform.environment] is withheld so a
+  /// hosted project (or a malicious dependency it pulls in) can't read secrets,
+  /// tokens, or unrelated host configuration from the process environment.
+  static const _allowedEnvKeys = {
+    // POSIX / Android essentials
+    'path', 'home', 'tmpdir', 'lang', 'lc_all', 'lc_ctype', 'term', 'user',
+    'logname', 'shell', 'tz', 'ld_library_path', 'android_root', 'android_data',
+    'android_storage', 'external_storage', 'bootclasspath',
+    // Windows essentials
+    'pathext', 'systemroot', 'systemdrive', 'comspec', 'windir', 'temp', 'tmp',
+    'userprofile', 'homedrive', 'homepath', 'appdata', 'localappdata',
+    'programfiles', 'programfiles(x86)', 'programdata', 'processor_architecture',
+    'number_of_processors', 'os', 'username', 'computername',
+  };
+
+  /// Builds the child environment: a curated slice of the host environment,
+  /// with the injected [port] and caller-supplied [extra] vars layered on top.
+  static Map<String, String> buildChildEnvironment(
+    int port,
+    Map<String, String> extra,
+  ) {
+    final env = <String, String>{};
+    Platform.environment.forEach((key, value) {
+      if (_allowedEnvKeys.contains(key.toLowerCase())) {
+        env[key] = value;
+      }
+    });
+    env['PORT'] = '$port';
+    env.addAll(extra);
+    return env;
+  }
+
   Future<void> start() async {
     if (_process != null) return;
 
     onLog?.call('[server] starting process: $command');
 
-    final env = {...Platform.environment, 'PORT': '$port', ...environment};
+    final env = buildChildEnvironment(port, environment);
 
     try {
       if (Platform.isWindows) {
@@ -95,6 +128,14 @@ class ProcessServer {
   }) async {
     onLog('[build] $ $command');
 
+    // Curated host env (no port injection needed for a one-shot build) plus
+    // the caller-supplied vars.
+    final env = <String, String>{};
+    Platform.environment.forEach((key, value) {
+      if (_allowedEnvKeys.contains(key.toLowerCase())) env[key] = value;
+    });
+    env.addAll(environment);
+
     Process process;
     try {
       if (Platform.isWindows) {
@@ -102,7 +143,7 @@ class ProcessServer {
           'cmd',
           ['/c', command],
           workingDirectory: workingDirectory,
-          environment: {...Platform.environment, ...environment},
+          environment: env,
           runInShell: false,
         );
       } else {
@@ -110,7 +151,7 @@ class ProcessServer {
           '/system/bin/sh',
           ['-c', command],
           workingDirectory: workingDirectory,
-          environment: {...Platform.environment, ...environment},
+          environment: env,
         );
       }
     } catch (_) {
@@ -118,7 +159,7 @@ class ProcessServer {
         Platform.isWindows ? 'cmd' : 'sh',
         [Platform.isWindows ? '/c' : '-c', command],
         workingDirectory: workingDirectory,
-        environment: {...Platform.environment, ...environment},
+        environment: env,
         runInShell: true,
       );
     }

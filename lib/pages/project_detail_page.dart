@@ -7,6 +7,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../backend/embedded_backend.dart';
 import '../providers/ai_server_provider.dart';
+import '../services/guided_tour_service.dart';
+import '../widgets/guided_tour_overlay.dart';
 
 class ProjectDetailPage extends ConsumerStatefulWidget {
   const ProjectDetailPage({super.key, required this.projectId});
@@ -21,10 +23,52 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
   final _logSearchController = TextEditingController();
   final _logScrollController = ScrollController();
 
+  final _controlKey = GlobalKey();
+  final _endpointKey = GlobalKey();
+  final _configKey = GlobalKey();
+  final _logsKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
     _logSearchController.addListener(() => setState(() {}));
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final steps = [
+        GuidedTourStep(
+          title: 'Start & Stop Hosting',
+          description:
+              'Tap Start Server to launch this project and open a public tunnel. Tap again to stop it anytime.',
+          targetKey: _controlKey,
+          tooltipPosition: TooltipPosition.bottom,
+        ),
+        GuidedTourStep(
+          title: 'Your Live Endpoint',
+          description:
+              'Once online, share or open your public URL here. Copy it or launch it in a browser with one tap.',
+          targetKey: _endpointKey,
+          tooltipPosition: TooltipPosition.bottom,
+        ),
+        GuidedTourStep(
+          title: 'Build Configuration',
+          description:
+              'Review the runtime, branch, assigned port, build command, and environment variables for this project.',
+          targetKey: _configKey,
+          tooltipPosition: TooltipPosition.top,
+        ),
+        GuidedTourStep(
+          title: 'Live Server Logs',
+          description:
+              'Watch real-time build and request logs here. Filter or copy them to debug your deployment.',
+          targetKey: _logsKey,
+          tooltipPosition: TooltipPosition.top,
+        ),
+      ];
+      ref.read(guidedTourNotifierProvider.notifier).checkAndAutoStartTour(
+            steps,
+            tourKey: 'buildify_tour_project_detail',
+          );
+    });
   }
 
   @override
@@ -80,7 +124,8 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
         scaffoldBackgroundColor: const Color(0xFF131312),
         textTheme: GoogleFonts.spaceMonoTextTheme(ThemeData.dark().textTheme),
       ),
-      child: Scaffold(
+      child: GuidedTourOverlay(
+        child: Scaffold(
         appBar: AppBar(
           backgroundColor: const Color(0xFF1F1F1E),
           elevation: 0,
@@ -161,6 +206,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
           children: [
             // 1. Live Control Card
             Container(
+              key: _controlKey,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: const Color(0xFF20201F),
@@ -231,6 +277,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
                   const SizedBox(height: 8),
 
                   Container(
+                    key: _endpointKey,
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.4),
@@ -275,6 +322,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
 
             // 2. Configuration Card
             Container(
+              key: _configKey,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: const Color(0xFF20201F),
@@ -323,6 +371,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
 
             // 3. System Logs Section
             Container(
+              key: _logsKey,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: const Color(0xFF20201F),
@@ -416,6 +465,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
             ),
           ],
         ),
+      ),
       ),
     );
   }

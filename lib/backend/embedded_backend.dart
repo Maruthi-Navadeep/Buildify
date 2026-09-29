@@ -253,7 +253,56 @@ class EmbeddedBackendService {
         );
       }).toList();
       _emit(_state.copyWith(projects: loaded));
+
+      // Resume the project that was live when the app was last closed. Only one
+      // tunnel/session is supported at a time, so restore the most recently
+      // active persistent project whose desired_state is 'running'.
+      await _restoreRunningProject(dbProjects);
     } catch (_) {}
+  }
+
+  /// Persists a project's run intent so it can be resumed after an app restart.
+  Future<void> _persistDesiredState(String projectId, String state) async {
+    try {
+      await DatabaseHelper.instance.updateProject(projectId, {
+        'desired_state': state,
+        'last_active_at': DateTime.now().millisecondsSinceEpoch,
+      });
+    } catch (_) {}
+  }
+
+  /// Auto-restarts the persistent project that was running before the last
+  /// shutdown. Any stale extra 'running' rows are reset to 'stopped' since the
+  /// backend only supports a single active session/tunnel.
+  Future<void> _restoreRunningProject(List<Map<String, dynamic>> rows) async {
+    final running = rows
+        .where((r) =>
+            r['desired_state'] == 'running' &&
+            (r['hosting_mode'] ?? 'persistent') != 'ephemeral')
+        .toList();
+    if (running.isEmpty) return;
+
+    running.sort((a, b) =>
+        (b['last_active_at'] as int).compareTo(a['last_active_at'] as int));
+
+    // Reset any stale extra running rows — only one can actually be live.
+    for (final r in running.skip(1)) {
+      final id = r['id'] as String;
+      await _persistDesiredState(id, 'stopped');
+      _updateProject(id, (p) => p.copyWith(isLive: false));
+    }
+
+    final targetId = running.first['id'] as String;
+    try {
+      _log(targetId, 'system', '-- resuming project after app restart --',
+          BackendLogType.system);
+      await startSession(projectId: targetId);
+    } catch (e) {
+      _log(targetId, 'system', '[ERR] Auto-resume failed: $e',
+          BackendLogType.error);
+      await _persistDesiredState(targetId, 'stopped');
+      _updateProject(targetId, (p) => p.copyWith(isLive: false));
+    }
   }
 
   Future<void> devLogin({String userName = 'user'}) async {
@@ -534,6 +583,11 @@ class EmbeddedBackendService {
     _updateProject(projectId, (p) => p.copyWith(isLive: true));
     _emit(_state.copyWith(activeSession: session));
 
+    // Persist run intent so this project resumes automatically after a restart.
+    if (project.hostingMode == HostingMode.persistent) {
+      await _persistDesiredState(projectId, 'running');
+    }
+
     // Poll for the tunnel public URL
     _ticker = Timer.periodic(const Duration(seconds: 2), (_) async {
       final current = _state.activeSession;
@@ -592,6 +646,10 @@ class EmbeddedBackendService {
     _emit(_state.copyWith(activeSession: null));
 
     final proj = _state.projects.where((p) => p.id == current.projectId).firstOrNull;
+    if (proj != null && proj.hostingMode == HostingMode.persistent) {
+      // Clear run intent so it stays stopped across restarts.
+      await _persistDesiredState(current.projectId, 'stopped');
+    }
     if (proj != null && proj.hostingMode == HostingMode.ephemeral) {
       await deleteProject(proj.id);
     }

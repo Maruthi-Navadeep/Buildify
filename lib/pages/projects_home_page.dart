@@ -1016,33 +1016,37 @@ class _MetaCell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       color: alt ? _ProjectsPalette.surfaceContainerHigh : _ProjectsPalette.surfaceMeta,
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: GoogleFonts.spaceMono(
-                fontSize: 8,
-                letterSpacing: 0.8,
-                color: _ProjectsPalette.outline.withValues(alpha: 0.6),
-              ),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.spaceMono(
+              fontSize: 8,
+              letterSpacing: 0.8,
+              color: _ProjectsPalette.outline.withValues(alpha: 0.6),
             ),
-            const SizedBox(height: 2),
-            Text(
+          ),
+          const SizedBox(height: 2),
+          Tooltip(
+            message: value,
+            child: Text(
               value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
               style: GoogleFonts.spaceMono(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
                 color: _ProjectsPalette.primary,
               ),
-              textAlign: TextAlign.center,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1393,221 +1397,6 @@ class _StaggeredFadeInState extends State<_StaggeredFadeIn>
           child: widget.children[i],
         );
       }),
-    );
-  }
-}
-
-class _CreateProjectModal extends StatefulWidget {
-  const _CreateProjectModal({required this.onCreate});
-  final void Function(String name, String runtime, HostingMode mode) onCreate;
-
-  @override
-  State<_CreateProjectModal> createState() => _CreateProjectModalState();
-}
-
-class _CreateProjectModalState extends State<_CreateProjectModal> {
-  final _nameController = TextEditingController(text: 'my-custom-api');
-  String _selectedRuntime = 'Node.js';
-  HostingMode _selectedMode = HostingMode.persistent;
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 448),
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: _ProjectsPalette.surfaceBody,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'host custom backend',
-                  style: GoogleFonts.spaceMono(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: _ProjectsPalette.primary,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'project name',
-                  style: GoogleFonts.spaceMono(
-                    fontSize: 12,
-                    color: Colors.white70,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _nameController,
-                  style: GoogleFonts.spaceMono(color: Colors.white),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.white.withValues(alpha: 0.05),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'runtime',
-                  style: GoogleFonts.spaceMono(
-                    fontSize: 12,
-                    color: Colors.white70,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: _selectedRuntime,
-                  dropdownColor: _ProjectsPalette.surfaceBody,
-                  style: GoogleFonts.spaceMono(color: Colors.white),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.white.withValues(alpha: 0.05),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  items: ['Node.js', 'Python FastAPI', 'Flask', 'Static HTML']
-                      .map((r) => DropdownMenuItem(value: r, child: Text(r)))
-                      .toList(),
-                  onChanged: (val) => setState(() => _selectedRuntime = val!),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'hosting mode tier',
-                  style: GoogleFonts.spaceMono(
-                    fontSize: 12,
-                    color: Colors.white70,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => setState(
-                          () => _selectedMode = HostingMode.persistent,
-                        ),
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: _selectedMode == HostingMode.persistent
-                                ? const Color(0xFF064E3B)
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: _selectedMode == HostingMode.persistent
-                                  ? const Color(0xFF10B981)
-                                  : Colors.white24,
-                            ),
-                          ),
-                          child: Column(
-                            children: [
-                              Text(
-                                '📌 PERSISTENT',
-                                style: GoogleFonts.spaceMono(
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'SQLite Logged\nPerm Storage',
-                                textAlign: TextAlign.center,
-                                style: GoogleFonts.spaceMono(
-                                  color: Colors.white70,
-                                  fontSize: 10,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => setState(
-                          () => _selectedMode = HostingMode.ephemeral,
-                        ),
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: _selectedMode == HostingMode.ephemeral
-                                ? const Color(0xFF5B21B6)
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: _selectedMode == HostingMode.ephemeral
-                                  ? const Color(0xFF8B5CF6)
-                                  : Colors.white24,
-                            ),
-                          ),
-                          child: Column(
-                            children: [
-                              Text(
-                                '⚡ EPHEMERAL',
-                                style: GoogleFonts.spaceMono(
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'OS Cache\nAuto-cleanup',
-                                textAlign: TextAlign.center,
-                                style: GoogleFonts.spaceMono(
-                                  color: Colors.white70,
-                                  fontSize: 10,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _ProjectsPalette.primary,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                  onPressed: () {
-                    if (_nameController.text.trim().isEmpty) return;
-                    widget.onCreate(
-                      _nameController.text.trim(),
-                      _selectedRuntime,
-                      _selectedMode,
-                    );
-                    Navigator.pop(context);
-                  },
-                  child: Text(
-                    'create & deploy',
-                    style: GoogleFonts.spaceMono(fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
