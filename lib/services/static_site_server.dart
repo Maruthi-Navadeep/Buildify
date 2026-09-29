@@ -20,9 +20,12 @@ class StaticSiteServer {
 
   Future<void> start() async {
     if (_server != null) return;
-    
-    _server = await HttpServer.bind(InternetAddress.anyIPv4, port, shared: true);
-    onLog?.call('[server] listening on port $port serving $localPath');
+
+    // Bind to loopback only. The project is exposed publicly through the
+    // Cloudflare tunnel (cloudflared connects locally), so there is no reason
+    // to listen on all interfaces and expose the dev server to the LAN.
+    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, port, shared: true);
+    onLog?.call('[server] listening on 127.0.0.1:$port serving $localPath');
     
     _server!.listen((HttpRequest request) {
       _handleRequest(request);
