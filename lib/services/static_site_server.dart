@@ -35,22 +35,43 @@ class StaticSiteServer {
   }
 
   File? _findFile(String rootPath, String relativePath) {
+    final normalizedRoot = p.normalize(p.absolute(rootPath));
+
+    // Reject any candidate that escapes the project root (path traversal).
+    bool isContained(String candidate) {
+      final n = p.normalize(p.absolute(candidate));
+      return p.equals(n, normalizedRoot) || p.isWithin(normalizedRoot, n);
+    }
+
     // 1. Direct match in rootDir
-    final candidate = File(p.normalize(p.join(rootPath, relativePath)));
-    if (candidate.existsSync()) return candidate;
+    final directPath = p.normalize(p.join(rootPath, relativePath));
+    if (isContained(directPath)) {
+      final candidate = File(directPath);
+      if (candidate.existsSync()) return candidate;
+    }
 
     // 2. Check if files were extracted into a single subfolder
     final rootDir = Directory(rootPath);
     if (rootDir.existsSync()) {
       for (final entity in rootDir.listSync()) {
         if (entity is Directory) {
-          final nested = File(p.normalize(p.join(entity.path, relativePath)));
-          if (nested.existsSync()) return nested;
+          final nestedPath = p.normalize(p.join(entity.path, relativePath));
+          if (isContained(nestedPath)) {
+            final nested = File(nestedPath);
+            if (nested.existsSync()) return nested;
+          }
         }
       }
     }
     return null;
   }
+
+  static String _escapeHtml(String s) => s
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
 
   void _handleRequest(HttpRequest request) async {
     final response = request.response;
@@ -86,14 +107,15 @@ class StaticSiteServer {
         onLog?.call('[server] 404 GET $reqPath (not found in $rootDir)', isError: true);
         response.statusCode = HttpStatus.notFound;
         response.headers.contentType = ContentType.html;
-        response.write('<html><body><h1>404 Not Found</h1><p>No file matching <code>$reqPath</code> found in project directory.</p></body></html>');
+        response.write('<html><body><h1>404 Not Found</h1><p>No file matching <code>${_escapeHtml(reqPath)}</code> found in project directory.</p></body></html>');
         await response.close();
       }
     } catch (e) {
       onLog?.call('[server] Error handling request: $e', isError: true);
       try {
         response.statusCode = HttpStatus.internalServerError;
-        response.write('Internal Server Error: $e');
+        response.headers.contentType = ContentType.html;
+        response.write('<html><body><h1>500 Internal Server Error</h1></body></html>');
         await response.close();
       } catch (_) {}
     }
