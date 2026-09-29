@@ -86,6 +86,11 @@ android/app/src/main/jniLibs/armeabi-v7a/lib*.so
 *.aab
 *.ipa
 
+# Demo / marketing videos (large binaries — keep out of repo)
+*.mp4
+*.mov
+demo-video/
+
 # Marketing site (website/) — Node-side ignores
 website/node_modules
 website/.next
