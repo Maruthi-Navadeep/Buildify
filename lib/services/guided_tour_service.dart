@@ -61,22 +61,33 @@ class GuidedTourNotifier extends StateNotifier<GuidedTourState> {
 
   static const _storage = FlutterSecureStorage();
 
+  // Which completion key the currently-active tour writes to when finished.
+  String _activeTourKey = _storageKeyHasCompletedTour;
+
   /// Checks storage and starts the tour if it's the user's first launch.
-  Future<void> checkAndAutoStartTour(List<GuidedTourStep> steps) async {
+  /// Pass a distinct [tourKey] to track completion per-page independently.
+  Future<void> checkAndAutoStartTour(
+    List<GuidedTourStep> steps, {
+    String tourKey = _storageKeyHasCompletedTour,
+  }) async {
     try {
-      final completed = await _storage.read(key: _storageKeyHasCompletedTour);
+      final completed = await _storage.read(key: tourKey);
       if (completed != 'true') {
-        startTour(steps);
+        startTour(steps, tourKey: tourKey);
       }
     } catch (_) {
       // In case of storage read error, default to starting the tour
-      startTour(steps);
+      startTour(steps, tourKey: tourKey);
     }
   }
 
   /// Manually starts the guided tour with a given list of steps.
-  void startTour(List<GuidedTourStep> steps) {
+  void startTour(
+    List<GuidedTourStep> steps, {
+    String tourKey = _storageKeyHasCompletedTour,
+  }) {
     if (steps.isEmpty) return;
+    _activeTourKey = tourKey;
     state = GuidedTourState(
       isActive: true,
       currentStepIndex: 0,
@@ -104,7 +115,7 @@ class GuidedTourNotifier extends StateNotifier<GuidedTourState> {
   Future<void> completeTour() async {
     state = state.copyWith(isActive: false);
     try {
-      await _storage.write(key: _storageKeyHasCompletedTour, value: 'true');
+      await _storage.write(key: _activeTourKey, value: 'true');
     } catch (_) {}
   }
 
