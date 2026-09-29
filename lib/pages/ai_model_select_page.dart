@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -8,6 +9,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/ai_server_models.dart';
 import '../providers/ai_server_provider.dart';
 import '../services/guided_tour_service.dart';
+import '../services/hf_service.dart';
 import '../widgets/guided_tour_overlay.dart';
 import 'service_detail_page.dart';
 
@@ -99,8 +101,32 @@ class _AiModelSelectPageState extends ConsumerState<AiModelSelectPage> {
     showDialog<void>(
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.8),
-      builder: (ctx) => const _CloneRepositoryModal(),
+      builder: (ctx) => const _ImportModelModal(),
     );
+  }
+
+  Future<void> _pickLocalFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['gguf'],
+      );
+      if (result == null || result.files.isEmpty) return;
+      final path = result.files.single.path;
+      if (path == null || !mounted) return;
+      await ref.read(aiServerProvider.notifier).importLocalFile(path);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Model imported — ready to use')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
+        );
+      }
+    }
   }
 
   List<ModelProfile> _filteredModels(List<ModelProfile> models) {
@@ -189,12 +215,7 @@ class _AiModelSelectPageState extends ConsumerState<AiModelSelectPage> {
                         const SizedBox(height: 48),
                         _ImportSection(
                           key: _importCustomKey,
-                          onUpload: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text('Custom upload coming soon')),
-                            );
-                          },
+                          onUpload: _pickLocalFile,
                           onClone: _openCloneModal,
                         ),
                         const SizedBox(height: 40),
@@ -1079,20 +1100,204 @@ class _ShinyContinueButtonState extends State<_ShinyContinueButton> {
   }
 }
 
-class _CloneRepositoryModal extends StatefulWidget {
-  const _CloneRepositoryModal();
+// ─────────────────────────────────────────────────────────────────────────────
+// Import Model Modal — HF search + direct URL
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum _ImportTab { search, url }
+
+class _ImportModelModal extends ConsumerStatefulWidget {
+  const _ImportModelModal();
 
   @override
-  State<_CloneRepositoryModal> createState() => _CloneRepositoryModalState();
+  ConsumerState<_ImportModelModal> createState() => _ImportModelModalState();
 }
 
-class _CloneRepositoryModalState extends State<_CloneRepositoryModal> {
-  final _urlController = TextEditingController();
+class _ImportModelModalState extends ConsumerState<_ImportModelModal> {
+  _ImportTab _tab = _ImportTab.search;
+
+  // ── HF search state ──
+  final _searchCtrl = TextEditingController();
+  bool _isSearching = false;
+  List<HfSearchResult> _results = [];
+  String? _searchError;
+  HfSearchResult? _pickedResult;
+  bool _isLoadingFiles = false;
+  List<HfModelFile> _files = [];
+  String? _filesError;
+
+  // ── URL state ──
+  final _urlCtrl = TextEditingController();
+  bool _isProcessingUrl = false;
+  List<HfModelFile> _urlFiles = [];
+  String? _urlRepoId;
+  String? _urlError;
 
   @override
   void dispose() {
-    _urlController.dispose();
+    _searchCtrl.dispose();
+    _urlCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _runSearch() async {
+    final q = _searchCtrl.text.trim();
+    if (q.isEmpty) return;
+    setState(() {
+      _isSearching = true;
+      _searchError = null;
+      _results = [];
+      _pickedResult = null;
+      _files = [];
+    });
+    try {
+      final results = await HfService.search(q);
+      if (!mounted) return;
+      setState(() {
+        _results = results;
+        _searchError = results.isEmpty ? 'No GGUF models found for "$q"' : null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _searchError = 'Search failed: $e');
+    } finally {
+      if (mounted) setState(() => _isSearching = false);
+    }
+  }
+
+  Future<void> _pickResult(HfSearchResult result) async {
+    setState(() {
+      _pickedResult = result;
+      _isLoadingFiles = true;
+      _files = [];
+      _filesError = null;
+    });
+    try {
+      final files = await HfService.getModelFiles(result.id);
+      if (!mounted) return;
+      setState(() {
+        _files = files;
+        _filesError = files.isEmpty ? 'No .gguf files found in this repo' : null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _filesError = 'Could not load files: $e');
+    } finally {
+      if (mounted) setState(() => _isLoadingFiles = false);
+    }
+  }
+
+  void _downloadFile(HfModelFile file) {
+    final repoId = _pickedResult!.id;
+    final displayName =
+        '${_pickedResult!.displayName} ${file.quantLabel}'.trim();
+    ref.read(aiServerProvider.notifier).downloadFromUrl(
+          downloadUrl: file.downloadUrl(repoId),
+          displayName: displayName,
+          fileName: file.rfilename,
+          sizeLabel: file.sizeLabel,
+          description: 'From HuggingFace: $repoId',
+        );
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Downloading $displayName…')),
+    );
+  }
+
+  Future<void> _processUrl() async {
+    final url = _urlCtrl.text.trim();
+    if (url.isEmpty) return;
+
+    setState(() {
+      _isProcessingUrl = true;
+      _urlError = null;
+      _urlFiles = [];
+      _urlRepoId = null;
+    });
+
+    try {
+      // Direct .gguf URL?
+      if (HfService.isDirectGgufUrl(url)) {
+        final fileName = Uri.parse(url).pathSegments.last;
+        final displayName = fileName
+            .replaceAll('.gguf', '')
+            .replaceAll('_', ' ')
+            .replaceAll('-', ' ');
+        if (!mounted) return;
+        ref.read(aiServerProvider.notifier).downloadFromUrl(
+              downloadUrl: url,
+              displayName: displayName,
+              fileName: fileName,
+            );
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Downloading $displayName…')),
+        );
+        return;
+      }
+
+      // HF model page URL?
+      final parsed = HfService.parseHfUrl(url);
+      if (parsed != null) {
+        if (parsed.filename != null) {
+          // Direct resolve URL
+          final fileName = parsed.filename!.split('/').last;
+          final displayName = fileName
+              .replaceAll('.gguf', '')
+              .replaceAll('_', ' ')
+              .replaceAll('-', ' ');
+          if (!mounted) return;
+          ref.read(aiServerProvider.notifier).downloadFromUrl(
+                downloadUrl: url,
+                displayName: displayName,
+                fileName: fileName,
+                description: 'From HuggingFace: ${parsed.repoId}',
+              );
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Downloading $displayName…')),
+          );
+          return;
+        }
+
+        // Model page — fetch file list
+        final files = await HfService.getModelFiles(parsed.repoId);
+        if (!mounted) return;
+        if (files.isEmpty) {
+          setState(() => _urlError = 'No .gguf files found in ${parsed.repoId}');
+        } else {
+          setState(() {
+            _urlFiles = files;
+            _urlRepoId = parsed.repoId;
+          });
+        }
+        return;
+      }
+
+      setState(() =>
+          _urlError = 'Unrecognised URL. Paste a HuggingFace model page or a direct .gguf link.');
+    } catch (e) {
+      if (mounted) setState(() => _urlError = 'Error: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessingUrl = false);
+    }
+  }
+
+  void _downloadUrlFile(HfModelFile file) {
+    final repoId = _urlRepoId!;
+    final displayName =
+        '${repoId.split('/').last} ${file.quantLabel}'.trim();
+    ref.read(aiServerProvider.notifier).downloadFromUrl(
+          downloadUrl: file.downloadUrl(repoId),
+          displayName: displayName,
+          fileName: file.rfilename,
+          sizeLabel: file.sizeLabel,
+          description: 'From HuggingFace: $repoId',
+        );
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Downloading $displayName…')),
+    );
   }
 
   @override
@@ -1101,80 +1306,489 @@ class _CloneRepositoryModalState extends State<_CloneRepositoryModal> {
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.all(16),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 512),
-        padding: const EdgeInsets.all(32),
+        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 640),
         decoration: BoxDecoration(
           color: _SelectPalette.background,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _SelectPalette.primary),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'clone from repository',
-              style: GoogleFonts.spaceMono(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: _SelectPalette.primary,
+            _ModalHeader(tab: _tab, onTabChange: (t) => setState(() {
+              _tab = t;
+              _urlFiles = [];
+              _urlRepoId = null;
+              _urlError = null;
+              _pickedResult = null;
+              _files = [];
+              _results = [];
+              _searchError = null;
+            })),
+            const Divider(height: 1, color: Color(0x1AFFFFFF)),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: _tab == _ImportTab.search
+                    ? _buildSearchBody()
+                    : _buildUrlBody(),
               ),
-            ),
-            const SizedBox(height: 24),
-            TextField(
-              controller: _urlController,
-              style: GoogleFonts.spaceMono(fontSize: 14, color: _SelectPalette.onSurface),
-              decoration: InputDecoration(
-                hintText: 'paste repository link (git/huggingface)...',
-                hintStyle: GoogleFonts.spaceMono(
-                  fontSize: 14,
-                  color: _SelectPalette.textDim,
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    style: BorderStyle.solid,
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: _SelectPalette.primary, width: 2),
-                ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              ),
-            ),
-            const SizedBox(height: 32),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text(
-                    'cancel',
-                    style: GoogleFonts.spaceMono(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.6,
-                      color: _SelectPalette.primary,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                _ShinyContinueButton(
-                  label: 'CLONE',
-                  onPressed: () {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Clone started (demo)')),
-                    );
-                  },
-                ),
-              ],
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSearchBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(children: [
+          Expanded(
+            child: _ModalTextField(
+              controller: _searchCtrl,
+              hint: 'search HuggingFace (e.g. "mistral 7b")…',
+              onSubmitted: (_) => _runSearch(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _ModalActionButton(
+            label: 'SEARCH',
+            loading: _isSearching,
+            onPressed: _runSearch,
+          ),
+        ]),
+        if (_searchError != null) ...[
+          const SizedBox(height: 12),
+          _ErrorText(_searchError!),
+        ],
+        if (_pickedResult != null) ...[
+          const SizedBox(height: 16),
+          _BackRow(
+            label: _pickedResult!.displayName,
+            onBack: () => setState(() {
+              _pickedResult = null;
+              _files = [];
+              _filesError = null;
+            }),
+          ),
+          const SizedBox(height: 12),
+          if (_isLoadingFiles)
+            const _LoadingRow()
+          else if (_filesError != null)
+            _ErrorText(_filesError!)
+          else
+            ..._files.map((f) => _FileRow(
+                  file: f,
+                  onDownload: () => _downloadFile(f),
+                )),
+        ] else if (_results.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          ..._results.map((r) => _ResultRow(
+                result: r,
+                onTap: () => _pickResult(r),
+              )),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildUrlBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _ModalTextField(
+          controller: _urlCtrl,
+          hint: 'huggingface.co/user/model  or  direct .gguf URL',
+          onSubmitted: (_) => _processUrl(),
+        ),
+        const SizedBox(height: 8),
+        _ModalActionButton(
+          label: 'FETCH',
+          loading: _isProcessingUrl,
+          onPressed: _processUrl,
+          fullWidth: true,
+        ),
+        if (_urlError != null) ...[
+          const SizedBox(height: 12),
+          _ErrorText(_urlError!),
+        ],
+        if (_urlFiles.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Text(
+            'choose quantization',
+            style: GoogleFonts.spaceMono(
+                fontSize: 10,
+                letterSpacing: 1.6,
+                color: _SelectPalette.textDim),
+          ),
+          const SizedBox(height: 8),
+          ..._urlFiles.map((f) => _FileRow(
+                file: f,
+                onDownload: () => _downloadUrlFile(f),
+              )),
+        ],
+      ],
+    );
+  }
+}
+
+// ── Sub-widgets for the modal ─────────────────────────────────────────────────
+
+class _ModalHeader extends StatelessWidget {
+  const _ModalHeader({required this.tab, required this.onTabChange});
+  final _ImportTab tab;
+  final ValueChanged<_ImportTab> onTabChange;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Expanded(
+              child: Text(
+                'import model',
+                style: GoogleFonts.spaceMono(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: _SelectPalette.primary,
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.close, color: _SelectPalette.textDim, size: 20),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+            ),
+          ]),
+          const SizedBox(height: 16),
+          Row(children: [
+            _TabChip(
+              label: 'hugging face search',
+              selected: tab == _ImportTab.search,
+              onTap: () => onTabChange(_ImportTab.search),
+            ),
+            const SizedBox(width: 8),
+            _TabChip(
+              label: 'paste url',
+              selected: tab == _ImportTab.url,
+              onTap: () => onTabChange(_ImportTab.url),
+            ),
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
+class _TabChip extends StatelessWidget {
+  const _TabChip({required this.label, required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected
+              ? Colors.white.withValues(alpha: 0.12)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected
+                ? Colors.white.withValues(alpha: 0.3)
+                : Colors.white.withValues(alpha: 0.08),
+          ),
+        ),
+        child: Text(
+          label,
+          style: GoogleFonts.spaceMono(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1,
+            color: selected ? _SelectPalette.primary : _SelectPalette.textDim,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModalTextField extends StatelessWidget {
+  const _ModalTextField(
+      {required this.controller, required this.hint, this.onSubmitted});
+  final TextEditingController controller;
+  final String hint;
+  final ValueChanged<String>? onSubmitted;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      onSubmitted: onSubmitted,
+      style: GoogleFonts.spaceMono(
+          fontSize: 13, color: _SelectPalette.onSurface),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle:
+            GoogleFonts.spaceMono(fontSize: 13, color: _SelectPalette.textDim),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide:
+              BorderSide(color: Colors.white.withValues(alpha: 0.15)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide:
+              const BorderSide(color: _SelectPalette.primary, width: 1.5),
+        ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        isDense: true,
+      ),
+    );
+  }
+}
+
+class _ModalActionButton extends StatelessWidget {
+  const _ModalActionButton({
+    required this.label,
+    required this.loading,
+    required this.onPressed,
+    this.fullWidth = false,
+  });
+  final String label;
+  final bool loading;
+  final VoidCallback onPressed;
+  final bool fullWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final child = loading
+        ? const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+                strokeWidth: 2, color: _SelectPalette.onPrimaryFixed),
+          )
+        : Text(
+            label,
+            style: GoogleFonts.spaceMono(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.6,
+              color: _SelectPalette.onPrimaryFixed,
+            ),
+          );
+
+    final btn = ElevatedButton(
+      onPressed: loading ? null : onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: _SelectPalette.primary,
+        foregroundColor: _SelectPalette.onPrimaryFixed,
+        padding:
+            const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        elevation: 0,
+      ),
+      child: child,
+    );
+
+    return fullWidth
+        ? SizedBox(width: double.infinity, child: btn)
+        : btn;
+  }
+}
+
+class _ErrorText extends StatelessWidget {
+  const _ErrorText(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.redAccent.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        text,
+        style: GoogleFonts.spaceMono(
+            fontSize: 11, color: Colors.redAccent.shade100),
+      ),
+    );
+  }
+}
+
+class _LoadingRow extends StatelessWidget {
+  const _LoadingRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Row(children: [
+        const SizedBox(
+          width: 14,
+          height: 14,
+          child: CircularProgressIndicator(
+              strokeWidth: 2, color: _SelectPalette.textDim),
+        ),
+        const SizedBox(width: 12),
+        Text('loading files…',
+            style: GoogleFonts.spaceMono(
+                fontSize: 12, color: _SelectPalette.textDim)),
+      ]),
+    );
+  }
+}
+
+class _BackRow extends StatelessWidget {
+  const _BackRow({required this.label, required this.onBack});
+  final String label;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      GestureDetector(
+        onTap: onBack,
+        child: const Icon(Icons.arrow_back_ios,
+            size: 14, color: _SelectPalette.textDim),
+      ),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(
+          label,
+          overflow: TextOverflow.ellipsis,
+          style: GoogleFonts.spaceMono(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: _SelectPalette.primary,
+          ),
+        ),
+      ),
+    ]);
+  }
+}
+
+class _ResultRow extends StatelessWidget {
+  const _ResultRow({required this.result, required this.onTap});
+  final HfSearchResult result;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          margin: const EdgeInsets.only(bottom: 6),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(8),
+            border:
+                Border.all(color: Colors.white.withValues(alpha: 0.08)),
+          ),
+          child: Row(children: [
+            const Icon(Icons.hub_outlined,
+                size: 16, color: _SelectPalette.textDim),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    result.displayName,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.spaceMono(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: _SelectPalette.primary),
+                  ),
+                  Text(
+                    result.id,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.spaceMono(
+                        fontSize: 10, color: _SelectPalette.textDim),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${result.ggufFileCount} files',
+              style: GoogleFonts.spaceMono(
+                  fontSize: 10, color: _SelectPalette.textDim),
+            ),
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right,
+                size: 16, color: _SelectPalette.textDim),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _FileRow extends StatelessWidget {
+  const _FileRow({required this.file, required this.onDownload});
+  final HfModelFile file;
+  final VoidCallback onDownload;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Row(children: [
+        const Icon(Icons.memory_outlined,
+            size: 16, color: _SelectPalette.textDim),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                file.quantLabel.isNotEmpty ? file.quantLabel : file.rfilename,
+                style: GoogleFonts.spaceMono(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _SelectPalette.primary),
+              ),
+              Text(
+                file.sizeLabel,
+                style: GoogleFonts.spaceMono(
+                    fontSize: 10, color: _SelectPalette.textDim),
+              ),
+            ],
+          ),
+        ),
+        _ShinyContinueButton(
+          label: 'GET',
+          onPressed: onDownload,
+        ),
+      ]),
     );
   }
 }
