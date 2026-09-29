@@ -1,5 +1,10 @@
 # Buildify AI Server
 
+<p align="center">
+  <img src="demo-video/buildify-brief-small.gif" alt="Buildify demo — host anything from your phone: run a local AI model or your project, on your own device" width="640">
+</p>
+
+
 Flutter Android app that turns a phone into a **local LLM HTTP server** on your Wi‑Fi: pick a GGUF model, start the server, and other devices call OpenAI-compatible endpoints (e.g. `/v1/chat/completions`) on the phone’s LAN IP.
 
 **Stack:** Flutter UI → MethodChannel → Kotlin foreground service → [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server` → GGUF on your device.

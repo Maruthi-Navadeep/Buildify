@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Buildify — README demo loop</title>
+
+    <!-- Brand fonts: Space Mono (app UI), Geist / Geist Mono (website framing) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Libraries (pinned CDN builds) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+
+    <style>
+      :root { color-scheme: dark; }
+      html, body {
+        margin: 0;
+        background: #05050a;
+        color: #E5E2E0;
+        font-family: "Geist", system-ui, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100vh;
+      }
+      #stage { margin-top: 24px; box-shadow: 0 30px 120px rgba(154, 223, 255, 0.08); border-radius: 12px; }
+      canvas { display: block; border-radius: 12px; }
+      #bar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin: 16px 0 40px;
+        font: 13px/1.4 "Geist Mono", monospace;
+        color: #8E9192;
+      }
+      button {
+        font: 12px/1 "Geist Mono", monospace;
+        color: #E5E2E0;
+        background: #20201F;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      button:hover { background: #2A2A29; }
+      kbd { background:#20201F; border:1px solid rgba(255,255,255,.12); border-radius:4px; padding:1px 5px; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="bar">
+      <button id="play">⏸ pause</button>
+      <button id="restart">⟲ restart</button>
+      <button id="mute">🔇 sound off</button>
+      <button id="rec">● record webm</button>
+      <span>&nbsp;or keys: <kbd>space</kbd> pause · <kbd>r</kbd> record · <kbd>m</kbd> sound</span>
+    </div>
+    <script src="sketch.js"></script>
+  </body>
+</html>
