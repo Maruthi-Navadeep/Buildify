@@ -90,12 +90,15 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
           ),
           title: Row(
             children: [
-              Text(
-                project.name,
-                style: GoogleFonts.spaceMono(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 18,
-                  color: Colors.white,
+              Flexible(
+                child: Text(
+                  project.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.spaceMono(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 18,
+                    color: Colors.white,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
