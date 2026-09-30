@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../theme/app_palette.dart';
+import '../models/ai_server_models.dart';
 import '../providers/ai_server_provider.dart';
 import '../widgets/model_tile.dart';
 
@@ -22,6 +23,36 @@ class _ModelStoreScreenState extends ConsumerState<ModelStoreScreen> {
       await ref.read(aiServerProvider.notifier).refreshCatalog();
     } finally {
       if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  Future<void> _confirmDelete(
+    BuildContext context,
+    AiServerController controller,
+    ModelProfile model,
+  ) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete ${model.name}?'),
+        content: const Text(
+          'This removes the downloaded model file from this device. '
+          'You can download it again later.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      await controller.deleteModel(model.id);
     }
   }
 
@@ -61,6 +92,8 @@ class _ModelStoreScreenState extends ConsumerState<ModelStoreScreen> {
             selected: state.selectedModelId == model.id,
             onSelect: () => controller.selectModel(model.id),
             onDownload: () => controller.downloadModel(model.id),
+            onCancel: () => controller.cancelDownload(model.id),
+            onDelete: () => _confirmDelete(context, controller, model),
           ),
           const SizedBox(height: 10),
         ],

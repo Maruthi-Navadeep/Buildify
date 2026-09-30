@@ -24,6 +24,7 @@ class ServiceDetailPage extends ConsumerStatefulWidget {
 class _ServiceDetailPageState extends ConsumerState<ServiceDetailPage> {
   final _logSearchController = TextEditingController();
   final _logScrollController = ScrollController();
+  int _lastLogCount = 0;
   bool _logsFullscreen = false;
   bool _showCustomRange = false;
   String _timeRange = 'last hour';
@@ -170,6 +171,11 @@ class _ServiceDetailPageState extends ConsumerState<ServiceDetailPage> {
     final model = _model(state);
     final device = state.device;
     final logs = _filteredLogs(_allLogs(state));
+    // Auto-scroll to newest log when the list grows.
+    if (logs.length != _lastLogCount) {
+      _lastLogCount = logs.length;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollLogsToBottom());
+    }
     final horizontalPadding = MediaQuery.sizeOf(context).width >= 768 ? 32.0 : 16.0;
     final ramUsed = (device.ramGb - device.availRamGb).clamp(0, device.ramGb.toDouble());
     final ramPct = device.ramGb > 0 ? (ramUsed / device.ramGb * 100).round() : 0;

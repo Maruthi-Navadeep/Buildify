@@ -12,6 +12,8 @@ class ModelTile extends ConsumerWidget {
     this.compact = false,
     this.onSelect,
     this.onDownload,
+    this.onCancel,
+    this.onDelete,
     super.key,
   });
 
@@ -21,6 +23,8 @@ class ModelTile extends ConsumerWidget {
   final bool compact;
   final VoidCallback? onSelect;
   final VoidCallback? onDownload;
+  final VoidCallback? onCancel;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -47,11 +51,18 @@ class ModelTile extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  if (selected || compact)
+                  if (selected)
                     const Icon(
                       Icons.check_circle,
                       color: AppPalette.teal,
                       size: 20,
+                    ),
+                  if (downloaded && onDelete != null && !compact)
+                    IconButton(
+                      tooltip: 'Delete model',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: onDelete,
+                      icon: const Icon(Icons.delete_outline, size: 20, color: AppPalette.muted),
                     ),
                 ],
               ),
@@ -77,14 +88,29 @@ class ModelTile extends ConsumerWidget {
               if (!compact) ...[
                 const SizedBox(height: 12),
                 if (downloading)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(999),
-                    child: LinearProgressIndicator(
-                      value: download.progress,
-                      minHeight: 8,
-                      backgroundColor: AppPalette.border,
-                      color: AppPalette.primary,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: LinearProgressIndicator(
+                            value: download.progress,
+                            minHeight: 8,
+                            backgroundColor: AppPalette.border,
+                            color: AppPalette.primary,
+                          ),
+                        ),
+                      ),
+                      if (onCancel != null) ...[
+                        const SizedBox(width: 8),
+                        IconButton(
+                          tooltip: 'Cancel download',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: onCancel,
+                          icon: const Icon(Icons.close, size: 18, color: AppPalette.muted),
+                        ),
+                      ],
+                    ],
                   )
                 else
                   Row(

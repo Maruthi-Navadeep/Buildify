@@ -227,6 +227,7 @@ class AiServerController extends StateNotifier<AiServerState> {
         device: state.device.copyWith(
           ipAddress: ip ?? state.device.ipAddress,
           tailscaleIp: tailscaleIp,
+          clearTailscaleIp: tailscaleIp == null,
         ),
       );
       _appendLog(
@@ -244,6 +245,7 @@ class AiServerController extends StateNotifier<AiServerState> {
         device: state.device.copyWith(
           ipAddress: ip ?? state.device.ipAddress,
           tailscaleIp: tailscaleIp,
+          clearTailscaleIp: tailscaleIp == null,
         ),
       );
     }

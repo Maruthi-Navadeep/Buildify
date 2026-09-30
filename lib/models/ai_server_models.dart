@@ -28,16 +28,29 @@ class ModelProfile {
   final String description;
 
   factory ModelProfile.fromJson(Map<String, dynamic> json) {
+    String str(String key, [String fallback = '']) {
+      final v = json[key];
+      return v is String ? v : (v?.toString() ?? fallback);
+    }
+
+    int intVal(String key, [int fallback = 0]) {
+      final v = json[key];
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      if (v is String) return int.tryParse(v) ?? fallback;
+      return fallback;
+    }
+
     return ModelProfile(
-      id: json['id'] as String,
-      name: json['name'] as String,
-      fileName: json['fileName'] as String,
-      downloadUrl: json['downloadUrl'] as String,
-      sizeLabel: json['sizeLabel'] as String,
-      speed: json['speed'] as String,
-      quality: json['quality'] as String,
-      requiredRamGb: json['requiredRamGb'] as int,
-      description: json['description'] as String,
+      id: str('id'),
+      name: str('name'),
+      fileName: str('fileName'),
+      downloadUrl: str('downloadUrl'),
+      sizeLabel: str('sizeLabel'),
+      speed: str('speed'),
+      quality: str('quality'),
+      requiredRamGb: intVal('requiredRamGb'),
+      description: str('description'),
     );
   }
 }
@@ -85,6 +98,7 @@ class DeviceSnapshot {
     bool? batteryCharging,
     String? ipAddress,
     String? tailscaleIp,
+    bool clearTailscaleIp = false,
     String? cpuLabel,
   }) {
     return DeviceSnapshot(
@@ -94,7 +108,7 @@ class DeviceSnapshot {
       batteryPercent: batteryPercent ?? this.batteryPercent,
       batteryCharging: batteryCharging ?? this.batteryCharging,
       ipAddress: ipAddress ?? this.ipAddress,
-      tailscaleIp: tailscaleIp ?? this.tailscaleIp,
+      tailscaleIp: clearTailscaleIp ? null : (tailscaleIp ?? this.tailscaleIp),
       cpuLabel: cpuLabel ?? this.cpuLabel,
     );
   }
