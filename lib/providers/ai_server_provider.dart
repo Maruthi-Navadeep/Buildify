@@ -193,8 +193,22 @@ class AiServerController extends StateNotifier<AiServerState> {
   static const _kSecThermal = 'sec_thermal_stop';
   static const _kSecSelectedModelId = 'sec_selected_model_id';
 
-  ModelProfile get selectedModel =>
-      state.models.firstWhere((model) => model.id == state.selectedModelId);
+  // Returns the currently-selected model, falling back to the first available
+  // model if the stored id is stale, and to a blank placeholder if the catalog
+  // has not loaded yet. Callers that start the server guard against the blank
+  // placeholder via the download-status check.
+  static final _blankModel = ModelProfile(
+    id: '', name: '', fileName: '', downloadUrl: '',
+    sizeLabel: '', speed: '', quality: '', requiredRamGb: 0, description: '',
+  );
+
+  ModelProfile get selectedModel {
+    if (state.models.isEmpty) return _blankModel;
+    return state.models.firstWhere(
+      (model) => model.id == state.selectedModelId,
+      orElse: () => state.models.first,
+    );
+  }
 
   String get apiBaseUrl => 'http://${state.device.ipAddress}:${state.port}';
 
@@ -697,7 +711,20 @@ class AiServerController extends StateNotifier<AiServerState> {
       port: live.port,
     );
     _appendLog('server running on $apiBaseUrl', LogType.system);
+    // Start beacon without tunnel URL; it will be updated once the tunnel resolves.
     unawaited(_discoveryBeacon.start(serverPort: live.port, modelName: selectedModel.name));
+  }
+
+  /// Called from _pollTunnelStatus once the public URL is known — restarts the
+  /// beacon so it advertises the tunnel URL to SDK peers.
+  void _updateBeaconTunnelUrl(String? tunnelUrl) {
+    if (!_discoveryBeacon.isRunning) return;
+    _discoveryBeacon.stop();
+    unawaited(_discoveryBeacon.start(
+      serverPort: state.port,
+      modelName: selectedModel.name,
+      tunnelUrl: tunnelUrl,
+    ));
   }
 
   Future<void> stopServer() async {
@@ -761,7 +788,18 @@ class AiServerController extends StateNotifier<AiServerState> {
     _appendLog('cloudflare tunnel stopped', LogType.system);
   }
 
-  void _pollTunnelStatus() {
+  void _pollTunnelStatus({int attempt = 0}) {
+    const maxAttempts = 15; // 30 s ceiling at 2 s/poll
+    if (attempt >= maxAttempts) {
+      state = state.copyWith(
+        tunnel: const TunnelState(
+          status: TunnelStatus.failed,
+          lastError: 'tunnel startup timed out',
+        ),
+      );
+      _appendLog('tunnel startup timed out after ${maxAttempts * 2}s', LogType.warning);
+      return;
+    }
     Future.delayed(const Duration(seconds: 2), () async {
       final live = await _native.getTunnelStatus();
       if (live == null) {
@@ -782,13 +820,14 @@ class AiServerController extends StateNotifier<AiServerState> {
       );
       if (newStatus == TunnelStatus.running && live.publicUrl != null) {
         _appendLog('tunnel active: ${live.publicUrl}', LogType.system);
+        _updateBeaconTunnelUrl(live.publicUrl);
       } else if (newStatus == TunnelStatus.failed) {
         _appendLog(
           'tunnel failed: ${live.lastError ?? "unknown"}',
           LogType.warning,
         );
       } else if (newStatus == TunnelStatus.starting) {
-        _pollTunnelStatus();
+        _pollTunnelStatus(attempt: attempt + 1);
       }
     });
   }
@@ -1153,6 +1192,7 @@ class AiServerController extends StateNotifier<AiServerState> {
 
   @override
   void dispose() {
+    for (final sub in _downloadSubs.values) {
       try {
         sub.cancel();
       } catch (_) {}
@@ -1182,7 +1222,11 @@ class AiServerController extends StateNotifier<AiServerState> {
   }
 
   String _modelName(String modelId) {
-    return state.models.firstWhere((model) => model.id == modelId).name;
+    final model = state.models.firstWhere(
+      (m) => m.id == modelId,
+      orElse: () => _blankModel,
+    );
+    return model.name.isNotEmpty ? model.name : modelId;
   }
 
   String _modelPathFor(ModelProfile model) {

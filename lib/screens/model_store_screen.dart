@@ -53,7 +53,11 @@ class _ModelStoreScreenState extends ConsumerState<ModelStoreScreen> {
         for (final model in state.models) ...[
           ModelTile(
             model: model,
-            download: state.downloads[model.id]!,
+            download: state.downloads[model.id] ??
+                const ModelDownload(
+                  status: ModelDownloadStatus.notDownloaded,
+                  progress: 0,
+                ),
             selected: state.selectedModelId == model.id,
             onSelect: () => controller.selectModel(model.id),
             onDownload: () => controller.downloadModel(model.id),

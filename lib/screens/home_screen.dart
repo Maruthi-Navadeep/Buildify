@@ -15,10 +15,17 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(aiServerProvider);
     final controller = ref.read(aiServerProvider.notifier);
+
+    // Guard: models list is populated asynchronously — show a spinner until ready.
+    if (state.models.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
     final selected = state.models.firstWhere(
       (m) => m.id == state.selectedModelId,
+      orElse: () => state.models.first,
     );
-    final download = state.downloads[selected.id]!;
+    final download = state.downloads[selected.id] ??
+        const ModelDownload(status: ModelDownloadStatus.notDownloaded, progress: 0);
     final canStart = download.status == ModelDownloadStatus.downloaded;
 
     return ListView(

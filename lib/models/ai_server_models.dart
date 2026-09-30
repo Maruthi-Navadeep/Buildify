@@ -125,10 +125,11 @@ class TunnelState {
 }
 
 class ServerLog {
-  const ServerLog(this.message, this.type);
+  ServerLog(this.message, this.type) : createdAt = DateTime.now();
 
   final String message;
   final LogType type;
+  final DateTime createdAt;
 }
 
 enum LogType { system, request, warning }
