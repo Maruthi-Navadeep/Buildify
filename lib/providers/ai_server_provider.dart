@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../models/ai_server_models.dart';
 import '../services/native_server_bridge.dart';
+import '../services/server_bridge_factory.dart';
 import '../services/mdns_service.dart';
 import '../backend/embedded_backend.dart';
 
@@ -178,7 +179,7 @@ class AiServerController extends StateNotifier<AiServerState> {
   Timer? _uptimeTimer;
   Timer? _metricsTimer;
   DateTime? _startedAt;
-  final _native = const NativeServerBridge();
+  final ServerBridge _native = createServerBridge();
   String? _modelBasePath;
   final Map<String, http.Client> _downloadClients = {};
   final Map<String, StreamSubscription<List<int>>> _downloadSubs = {};
