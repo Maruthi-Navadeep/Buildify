@@ -1,10 +1,36 @@
 import 'package:flutter/services.dart';
 
-class NativeServerBridge {
+/// Platform-agnostic contract for driving the on-device AI server + tunnel.
+///
+/// Implemented by [NativeServerBridge] (Android/iOS, via MethodChannel) and by
+/// DesktopServerBridge (Windows/Linux/macOS, via dart:io Process). The provider
+/// depends only on this interface so the backend swaps by platform.
+abstract class ServerBridge {
+  Future<NativeServerResponse> startServer({
+    required String modelPath,
+    required int port,
+    String? apiKey,
+    int idleMinutes,
+    int batteryStopPercent,
+    bool thermalStop,
+  });
+  Future<NativeServerResponse> stopServer();
+  Future<NativeServerStatus?> getServerStatus();
+  Future<String?> getModelBasePath();
+  Future<String?> getLocalIp();
+  Future<String?> getTailscaleIp();
+  Future<Map<String, dynamic>?> getDeviceMetrics();
+  Future<NativeTunnelResponse> startTunnel({required int port, String? tunnelUrl});
+  Future<NativeTunnelResponse> stopTunnel();
+  Future<NativeTunnelStatus?> getTunnelStatus();
+}
+
+class NativeServerBridge implements ServerBridge {
   const NativeServerBridge();
 
   static const MethodChannel _channel = MethodChannel('buildify.ai/server');
 
+  @override
   Future<NativeServerResponse> startServer({
     required String modelPath,
     required int port,
@@ -35,6 +61,7 @@ class NativeServerBridge {
     }
   }
 
+  @override
   Future<NativeServerResponse> stopServer() async {
     try {
       final raw = await _channel.invokeMapMethod<String, dynamic>('stopServer');
@@ -48,6 +75,7 @@ class NativeServerBridge {
     }
   }
 
+  @override
   Future<NativeServerStatus?> getServerStatus() async {
     try {
       final raw = await _channel.invokeMapMethod<String, dynamic>(
@@ -60,6 +88,7 @@ class NativeServerBridge {
     }
   }
 
+  @override
   Future<String?> getModelBasePath() async {
     try {
       return await _channel.invokeMethod<String>('getModelBasePath');
@@ -68,6 +97,7 @@ class NativeServerBridge {
     }
   }
 
+  @override
   Future<String?> getLocalIp() async {
     try {
       return await _channel.invokeMethod<String>('getLocalIp');
@@ -76,6 +106,7 @@ class NativeServerBridge {
     }
   }
 
+  @override
   Future<String?> getTailscaleIp() async {
     try {
       return await _channel.invokeMethod<String>('getTailscaleIp');
@@ -84,6 +115,7 @@ class NativeServerBridge {
     }
   }
 
+  @override
   Future<Map<String, dynamic>?> getDeviceMetrics() async {
     try {
       return await _channel.invokeMapMethod<String, dynamic>('getDeviceMetrics');
@@ -92,6 +124,7 @@ class NativeServerBridge {
     }
   }
 
+  @override
   Future<NativeTunnelResponse> startTunnel({
     required int port,
     String? tunnelUrl,
@@ -114,6 +147,7 @@ class NativeServerBridge {
     }
   }
 
+  @override
   Future<NativeTunnelResponse> stopTunnel() async {
     try {
       final raw = await _channel.invokeMapMethod<String, dynamic>('stopTunnel');
@@ -127,6 +161,7 @@ class NativeServerBridge {
     }
   }
 
+  @override
   Future<NativeTunnelStatus?> getTunnelStatus() async {
     try {
       final raw = await _channel.invokeMapMethod<String, dynamic>(

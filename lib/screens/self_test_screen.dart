@@ -15,12 +15,25 @@ class SelfTestScreen extends ConsumerStatefulWidget {
 
 class _SelfTestScreenState extends ConsumerState<SelfTestScreen> {
   final input = TextEditingController();
+  final _scroll = ScrollController();
   bool _sending = false;
 
   @override
   void dispose() {
     input.dispose();
+    _scroll.dispose();
     super.dispose();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.animateTo(
+        _scroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   @override
@@ -32,6 +45,7 @@ class _SelfTestScreenState extends ConsumerState<SelfTestScreen> {
       children: [
         Expanded(
           child: ListView(
+            controller: _scroll,
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
             children: [
               if (state.chat.isEmpty)
@@ -55,7 +69,9 @@ class _SelfTestScreenState extends ConsumerState<SelfTestScreen> {
                           ? Alignment.centerRight
                           : Alignment.centerLeft,
                   child: Container(
-                    constraints: const BoxConstraints(maxWidth: 320),
+                    constraints: BoxConstraints(
+                      maxWidth: MediaQuery.sizeOf(context).width * 0.75,
+                    ),
                     margin: const EdgeInsets.only(bottom: 10),
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
@@ -165,10 +181,12 @@ class _SelfTestScreenState extends ConsumerState<SelfTestScreen> {
     if (prompt.trim().isEmpty) return;
     input.clear();
     setState(() => _sending = true);
+    _scrollToBottom();
     try {
       await ref.read(aiServerProvider.notifier).sendPrompt(prompt);
     } finally {
       if (mounted) setState(() => _sending = false);
+      _scrollToBottom();
     }
   }
 }
