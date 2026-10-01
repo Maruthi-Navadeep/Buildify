@@ -853,8 +853,8 @@ class _GithubAppInstallSimulationPageState
                         children: [
                           RadioListTile<bool>(
                             value: true,
-                            groupValue: _allRepos,
-                            onChanged: (val) {
+                            groupValue: _allRepos, // ignore: deprecated_member_use
+                            onChanged: (val) { // ignore: deprecated_member_use
                               if (val != null) setState(() => _allRepos = val);
                             },
                             title: Text(
@@ -874,8 +874,8 @@ class _GithubAppInstallSimulationPageState
                           ),
                           RadioListTile<bool>(
                             value: false,
-                            groupValue: _allRepos,
-                            onChanged: (val) {
+                            groupValue: _allRepos, // ignore: deprecated_member_use
+                            onChanged: (val) { // ignore: deprecated_member_use
                               if (val != null) setState(() => _allRepos = val);
                             },
                             title: Text(
@@ -1322,7 +1322,7 @@ class _HostProjectSettingsPageState
                 ),
                 const SizedBox(height: 6),
                 DropdownButtonFormField<String>(
-                  value: _selectedFramework,
+                  value: _selectedFramework, // ignore: deprecated_member_use
                   dropdownColor: _WizardPalette.surfaceBody,
                   style: GoogleFonts.spaceMono(color: _WizardPalette.primary),
                   decoration: InputDecoration(
