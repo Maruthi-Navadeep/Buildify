@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/ai_server_models.dart';
 import '../providers/ai_server_provider.dart';
@@ -23,13 +24,12 @@ class ServiceDetailPage extends ConsumerStatefulWidget {
 class _ServiceDetailPageState extends ConsumerState<ServiceDetailPage> {
   final _logSearchController = TextEditingController();
   final _logScrollController = ScrollController();
+  int _lastLogCount = 0;
   bool _logsFullscreen = false;
   bool _showCustomRange = false;
   String _timeRange = 'last hour';
 
-  static const _serviceId = 'srv-d7udp0po3t8c73fglb40';
-  static const _liveUrl = 'project-x-h5d0.onrender.com';
-  static const _repo = 'Sujith8257 / Project---X';
+  // No hardcoded external IDs — identifiers are derived from runtime state.
 
 
 
@@ -72,21 +72,23 @@ class _ServiceDetailPageState extends ConsumerState<ServiceDetailPage> {
     if (dl == null) return const [];
 
     final now = DateTime.now();
-    final h = now.hour > 12 ? now.hour - 12 : (now.hour == 0 ? 12 : now.hour);
+    final h = now.hour >= 12 ? (now.hour == 12 ? 12 : now.hour - 12) : (now.hour == 0 ? 12 : now.hour);
     final ts =
         '$h:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')} ${now.hour >= 12 ? 'pm' : 'am'}';
 
     if (dl.status == ModelDownloadStatus.downloading) {
       final pct = (dl.progress * 100).clamp(0, 100).round();
       return [
-        _LogLine(ts, '[buildify]', 'downloading ${model.name.toLowerCase()}…', highlight: true),
-        _LogLine(ts, '[buildify]', 'progress: $pct%'),
+        _LogLine(ts, '[buildify]', 'downloading ${model.name.toLowerCase()}…',
+            createdAt: now, highlight: true),
+        _LogLine(ts, '[buildify]', 'progress: $pct%', createdAt: now),
       ];
     }
 
     if (dl.status == ModelDownloadStatus.downloaded) {
       return [
-        _LogLine(ts, '[buildify]', 'model ready on device', success: true),
+        _LogLine(ts, '[buildify]', 'model ready on device',
+            createdAt: now, success: true),
       ];
     }
 
@@ -95,14 +97,15 @@ class _ServiceDetailPageState extends ConsumerState<ServiceDetailPage> {
 
   List<_LogLine> _allLogs(AiServerState state) {
     final fromState = state.logs.map((l) {
-      final now = DateTime.now();
-      final h = now.hour > 12 ? now.hour - 12 : (now.hour == 0 ? 12 : now.hour);
+      final t = l.createdAt;
+      final h = t.hour >= 12 ? (t.hour == 12 ? 12 : t.hour - 12) : (t.hour == 0 ? 12 : t.hour);
       final ts =
-          '$h:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')} ${now.hour >= 12 ? 'pm' : 'am'}';
+          '$h:${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')} ${t.hour >= 12 ? 'pm' : 'am'}';
       return _LogLine(
         ts,
         '[buildify]',
         l.message,
+        createdAt: t,
         highlight: l.type == LogType.system,
         warning: l.type == LogType.warning,
         dim: l.type == LogType.request,
@@ -114,15 +117,27 @@ class _ServiceDetailPageState extends ConsumerState<ServiceDetailPage> {
 
 
   List<_LogLine> _filteredLogs(List<_LogLine> logs) {
+    var result = logs;
+
+    // Apply time-range filter.
+    if (_timeRange == 'last hour') {
+      final cutoff = DateTime.now().subtract(const Duration(hours: 1));
+      result = result.where((l) => l.createdAt.isAfter(cutoff)).toList();
+    }
+    // 'custom range' — date inputs are display-only for now; show all logs.
+
+    // Apply text search.
     final q = _logSearchController.text.trim().toLowerCase();
-    if (q.isEmpty) return logs;
-    return logs
-        .where(
-          (l) =>
-              l.message.toLowerCase().contains(q) ||
-              l.instance.toLowerCase().contains(q),
-        )
-        .toList();
+    if (q.isNotEmpty) {
+      result = result
+          .where(
+            (l) =>
+                l.message.toLowerCase().contains(q) ||
+                l.instance.toLowerCase().contains(q),
+          )
+          .toList();
+    }
+    return result;
   }
 
   void _scrollLogsToBottom() {
@@ -134,10 +149,10 @@ class _ServiceDetailPageState extends ConsumerState<ServiceDetailPage> {
     );
   }
 
-  void _copyServiceId() {
-    Clipboard.setData(const ClipboardData(text: _serviceId));
+  void _copyServiceId(String apiUrl) {
+    Clipboard.setData(ClipboardData(text: apiUrl));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Service ID copied')),
+      const SnackBar(content: Text('API URL copied')),
     );
   }
 
@@ -156,16 +171,25 @@ class _ServiceDetailPageState extends ConsumerState<ServiceDetailPage> {
     final model = _model(state);
     final device = state.device;
     final logs = _filteredLogs(_allLogs(state));
+    // Auto-scroll to newest log when the list grows.
+    if (logs.length != _lastLogCount) {
+      _lastLogCount = logs.length;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollLogsToBottom());
+    }
     final horizontalPadding = MediaQuery.sizeOf(context).width >= 768 ? 32.0 : 16.0;
     final ramUsed = (device.ramGb - device.availRamGb).clamp(0, device.ramGb.toDouble());
     final ramPct = device.ramGb > 0 ? (ramUsed / device.ramGb * 100).round() : 0;
-    const storageTotal = 128.0;
-    final storageUsed = (storageTotal - device.freeStorageGb).clamp(0, storageTotal);
-    final storagePct = (storageUsed / storageTotal * 100).round();
-    final cpuPct = (state.requestsPerSecond * 8 + state.temperature * 2)
-        .clamp(0, 100)
-        .round();
-    final liveUrl = state.tunnel.publicUrl?.replaceFirst(RegExp(r'^https?://'), '') ?? _liveUrl;
+    final storagePct = device.freeStorageGb > 0
+        ? ((1 - device.freeStorageGb / (device.freeStorageGb + 8)) * 100).round().clamp(0, 100)
+        : 0;
+    // CPU is not available from native metrics yet — show rps-scaled approximation.
+    final cpuPct = (state.requestsPerSecond * 8).clamp(0, 100).round();
+    // Derive identifiers from live state rather than hardcoded strings.
+    final apiUrl = 'http://${device.ipAddress}:${state.port}';
+    final liveUrl = state.tunnel.publicUrl?.replaceFirst(RegExp(r'^https?://'), '')
+        ?? '${device.ipAddress}:${state.port}';
+    final serviceId = 'local-ai-${state.port}';
+    final repoLabel = model.name.isNotEmpty ? model.name : 'local model';
     final terminalHeight = _logsFullscreen
         ? MediaQuery.sizeOf(context).height * 0.75
         : 400.0;
@@ -205,12 +229,22 @@ class _ServiceDetailPageState extends ConsumerState<ServiceDetailPage> {
                       ),
                       const SizedBox(height: 32),
                       _MetadataGrid(
-                        serviceId: _serviceId,
-                        repo: _repo,
+                        serviceId: serviceId,
+                        repo: repoLabel,
                         liveUrl: liveUrl,
-                        onCopyId: _copyServiceId,
-                        onOpenUrl: () {
-                          Clipboard.setData(ClipboardData(text: 'https://$liveUrl'));
+                        onCopyId: () => _copyServiceId(apiUrl),
+                        onOpenUrl: () async {
+                          final uri = Uri.parse('https://$liveUrl');
+                          if (await canLaunchUrl(uri)) {
+                            await launchUrl(uri, mode: LaunchMode.externalApplication);
+                          } else {
+                            Clipboard.setData(ClipboardData(text: 'https://$liveUrl'));
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('URL copied (could not open browser)')),
+                              );
+                            }
+                          }
                         },
                       ),
                       const SizedBox(height: 48),
@@ -376,6 +410,7 @@ class _LogLine {
     this.time,
     this.instance,
     this.message, {
+    required this.createdAt,
     this.highlight = false,
     this.success = false,
     this.warning = false,
@@ -385,6 +420,7 @@ class _LogLine {
   final String time;
   final String instance;
   final String message;
+  final DateTime createdAt;
   final bool highlight;
   final bool success;
   final bool warning;
@@ -2034,12 +2070,6 @@ class _RuntimeLogsSection extends StatelessWidget {
                     ),
                   ),
                 ],
-              ),
-              Container(
-                height: 48,
-                color: _DetailPalette.surfaceContainerLow,
-                alignment: Alignment.center,
-                child: const SizedBox.shrink(),
               ),
             ],
           ),

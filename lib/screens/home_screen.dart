@@ -15,10 +15,17 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(aiServerProvider);
     final controller = ref.read(aiServerProvider.notifier);
+
+    // Guard: models list is populated asynchronously — show a spinner until ready.
+    if (state.models.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
     final selected = state.models.firstWhere(
       (m) => m.id == state.selectedModelId,
+      orElse: () => state.models.first,
     );
-    final download = state.downloads[selected.id]!;
+    final download = state.downloads[selected.id] ??
+        const ModelDownload(status: ModelDownloadStatus.notDownloaded, progress: 0);
     final canStart = download.status == ModelDownloadStatus.downloaded;
 
     return ListView(
@@ -519,10 +526,36 @@ class _SliderRow extends StatelessWidget {
   }
 }
 
-class _LogPanel extends StatelessWidget {
+class _LogPanel extends StatefulWidget {
   const _LogPanel({required this.logs});
 
   final List<ServerLog> logs;
+
+  @override
+  State<_LogPanel> createState() => _LogPanelState();
+}
+
+class _LogPanelState extends State<_LogPanel> {
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
+  @override
+  void didUpdateWidget(_LogPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.logs.length != oldWidget.logs.length) _scrollToBottom();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -535,9 +568,10 @@ class _LogPanel extends StatelessWidget {
         border: Border.all(color: AppPalette.border),
       ),
       child: ListView.builder(
-        itemCount: logs.length,
+        controller: _scroll,
+        itemCount: widget.logs.length,
         itemBuilder: (context, index) {
-          final log = logs[index];
+          final log = widget.logs[index];
           return Text(
             log.message,
             style: TextStyle(
