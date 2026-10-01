@@ -46,6 +46,10 @@ jobs:
     name: Dependency review
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    # Requires "Dependency graph" to be enabled in the repo's
+    # Settings → Security & Analysis page. Set continue-on-error: false
+    # once that setting is turned on.
+    continue-on-error: true
     permissions:
       contents: read
       pull-requests: write
@@ -59,14 +63,19 @@ jobs:
 
   osv-scanner:
     name: OSV vulnerability scan
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
-      actions: read
-    uses: google/osv-scanner/.github/workflows/osv-scanner-reusable.yml@v1
-    with:
-      scan-args: |-
-        --lockfile=./pubspec.lock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Run osv-scanner
+        run: |
+          go install github.com/google/osv-scanner/cmd/osv-scanner@v1
+          osv-scanner --lockfile=pubspec.lock
 
   secrets:
     name: Secret scan (gitleaks)

@@ -1153,6 +1153,7 @@ class AiServerController extends StateNotifier<AiServerState> {
 
   @override
   void dispose() {
+    for (final sub in _downloadSubs.values) {
       try {
         sub.cancel();
       } catch (_) {}
