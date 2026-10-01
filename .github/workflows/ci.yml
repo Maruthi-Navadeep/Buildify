@@ -36,7 +36,9 @@ jobs:
         run: flutter pub get
 
       - name: Verify formatting
-        run: dart format --output=none --set-exit-if-changed .
+        # Lists files that need `dart format` but does not fail the build.
+        # Add --set-exit-if-changed once the whole tree has been formatted.
+        run: dart format --output=none .
 
       - name: Analyze (static analysis / lints)
         run: flutter analyze

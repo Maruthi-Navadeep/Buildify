@@ -179,6 +179,8 @@ class _ServiceDetailPageState extends ConsumerState<ServiceDetailPage> {
     final horizontalPadding = MediaQuery.sizeOf(context).width >= 768 ? 32.0 : 16.0;
     final ramUsed = (device.ramGb - device.availRamGb).clamp(0, device.ramGb.toDouble());
     final ramPct = device.ramGb > 0 ? (ramUsed / device.ramGb * 100).round() : 0;
+    const storageTotal = 128.0;
+    final storageUsed = (storageTotal - device.freeStorageGb).clamp(0.0, storageTotal);
     final storagePct = device.freeStorageGb > 0
         ? ((1 - device.freeStorageGb / (device.freeStorageGb + 8)) * 100).round().clamp(0, 100)
         : 0;
