@@ -1,15 +1,31 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class DatabaseHelper {
   DatabaseHelper._privateConstructor();
   static final DatabaseHelper instance = DatabaseHelper._privateConstructor();
 
   static Database? _database;
+  static bool _ffiInitialized = false;
+
+  /// On desktop (Windows/Linux/macOS) the default sqflite plugin has no native
+  /// implementation, so we route through the FFI factory backed by the bundled
+  /// SQLite library. Android and iOS keep the standard plugin.
+  static void _ensureDesktopFactory() {
+    if (_ffiInitialized) return;
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    }
+    _ffiInitialized = true;
+  }
 
   Future<Database> get database async {
     if (_database != null) return _database!;
+    _ensureDesktopFactory();
     _database = await _initDatabase();
     return _database!;
   }

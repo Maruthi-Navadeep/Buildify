@@ -149,10 +149,12 @@ class _AiModelSelectPageState extends ConsumerState<AiModelSelectPage> {
     }).toList();
   }
 
-  bool _isSmallModel(ModelProfile m) =>
-      m.id == 'tinyllama-q4' || m.id == 'qwen2-1_5b-q4';
+  // Size buckets derived from the model's RAM requirement so any catalog entry
+  // or custom-imported model is classified, not just a hardcoded id list.
+  bool _isSmallModel(ModelProfile m) => m.requiredRamGb < 4;
 
-  bool _isMediumModel(ModelProfile m) => m.id == 'phi-3-mini-q4';
+  bool _isMediumModel(ModelProfile m) =>
+      m.requiredRamGb >= 4 && m.requiredRamGb < 8;
 
   @override
   Widget build(BuildContext context) {
