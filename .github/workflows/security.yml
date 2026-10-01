@@ -49,7 +49,7 @@ jobs:
     # Requires "Dependency graph" to be enabled in the repo's
     # Settings → Security & Analysis page. Set continue-on-error: false
     # once that setting is turned on.
-    continue-on-error: true
+    # continue-on-error: true
     permissions:
       contents: read
       pull-requests: write
