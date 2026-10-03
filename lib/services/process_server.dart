@@ -126,7 +126,7 @@ class ProcessServer {
     required Map<String, String> environment,
     required void Function(String, {bool isError}) onLog,
   }) async {
-    onLog('[build] $ $command');
+    onLog('[build] \$ $command');
 
     // Curated host env (no port injection needed for a one-shot build) plus
     // the caller-supplied vars.

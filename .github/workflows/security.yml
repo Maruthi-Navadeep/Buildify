@@ -1,0 +1,91 @@
+name: Security
+
+# Security scanning: static analysis (CodeQL), dependency vulnerabilities
+# (OSV + GitHub dependency review), and secret detection (gitleaks).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '27 4 * * 1' # weekly, Monday 04:27 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: CodeQL (Kotlin)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: java-kotlin
+          # build-mode none analyses the Android/Kotlin sources without a full
+          # Gradle build (Flutter's Gradle needs the SDK, which CodeQL lacks).
+          build-mode: none
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:java-kotlin
+
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    # Requires "Dependency graph" to be enabled in the repo's
+    # Settings → Security & Analysis page. Set continue-on-error: false
+    # once that setting is turned on.
+    # continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  osv-scanner:
+    name: OSV vulnerability scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Run osv-scanner
+        run: |
+          go install github.com/google/osv-scanner/cmd/osv-scanner@v1
+          osv-scanner --lockfile=pubspec.lock
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # gitleaks-action is free for public repos; orgs need a GITLEAKS_LICENSE.

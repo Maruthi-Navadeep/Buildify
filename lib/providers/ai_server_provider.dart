@@ -64,7 +64,7 @@ class AiServerController extends StateNotifier<AiServerState> {
             lowPowerMode: false,
             temperature: 0.7,
             tokenLimit: 100,
-            logs: const [
+            logs: [
               ServerLog(
                 'runtime ready: waiting for model selection',
                 LogType.system,
